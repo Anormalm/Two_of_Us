@@ -1,7 +1,8 @@
 import { and, desc, eq, gte } from "drizzle-orm";
+import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "../../chatgpt-auth";
 import { getDb } from "../../../db";
-import { habitChecks, habits, ideas, memories, profiles, workspaceSettings } from "../../../db/schema";
+import { habitChecks, habits, ideas, memories, memoryPhotos, profiles, workspaceSettings } from "../../../db/schema";
 
 const categories = new Set(["eat", "buy", "go", "cook", "watch", "other"]);
 const statuses = new Set(["idea", "planned", "done"]);
@@ -42,15 +43,16 @@ export async function GET() {
   const db = getDb();
   const since = new Date();
   since.setDate(since.getDate() - 45);
-  const [people, ideaRows, habitRows, checkRows, memoryRows, settingsRows] = await Promise.all([
+  const [people, ideaRows, habitRows, checkRows, memoryRows, photoRows, settingsRows] = await Promise.all([
     db.select().from(profiles),
     db.select().from(ideas).orderBy(desc(ideas.createdAt)),
     db.select().from(habits).orderBy(desc(habits.createdAt)),
     db.select().from(habitChecks).where(gte(habitChecks.day, since.toISOString().slice(0, 10))),
     db.select().from(memories).orderBy(desc(memories.memoryDate), desc(memories.createdAt)),
+    db.select({ id: memoryPhotos.id, memoryId: memoryPhotos.memoryId, fileName: memoryPhotos.fileName, contentType: memoryPhotos.contentType, uploadedBy: memoryPhotos.uploadedBy, createdAt: memoryPhotos.createdAt }).from(memoryPhotos).orderBy(memoryPhotos.createdAt),
     db.select().from(workspaceSettings).where(eq(workspaceSettings.id, 1)).limit(1),
   ]);
-  return Response.json({ currentUserId: user.userId, people, ideas: ideaRows, habits: habitRows, checks: checkRows, memories: memoryRows, pendingPartnerName: settingsRows[0]?.pendingPartnerName || "" });
+  return Response.json({ currentUserId: user.userId, people, ideas: ideaRows, habits: habitRows, checks: checkRows, memories: memoryRows, memoryPhotos: photoRows, pendingPartnerName: settingsRows[0]?.pendingPartnerName || "" });
 }
 
 export async function POST(request: Request) {
@@ -159,6 +161,8 @@ export async function POST(request: Request) {
   if (action === "deleteMemory") {
     const id = Number(payload.id);
     if (!Number.isInteger(id)) return Response.json({ error: "无效记录" }, { status: 400 });
+    const photos = await db.select().from(memoryPhotos).where(eq(memoryPhotos.memoryId, id));
+    if (env.BUCKET && photos.length) await Promise.all(photos.map((photo) => env.BUCKET!.delete(photo.objectKey)));
     await db.delete(memories).where(eq(memories.id, id));
     return Response.json({ deleted: true });
   }

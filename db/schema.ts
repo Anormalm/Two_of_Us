@@ -56,3 +56,13 @@ export const memories = sqliteTable("memories", {
   createdBy: text("created_by").notNull(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const memoryPhotos = sqliteTable("memory_photos", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  memoryId: integer("memory_id").notNull().references(() => memories.id, { onDelete: "cascade" }),
+  objectKey: text("object_key").notNull().unique(),
+  fileName: text("file_name").notNull(),
+  contentType: text("content_type").notNull(),
+  uploadedBy: text("uploaded_by").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});

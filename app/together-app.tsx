@@ -1,17 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, CalendarDays, Check, ChevronRight, Heart, House, ListChecks, LoaderCircle, NotebookPen, Plus, RotateCcw, Settings2, Trash2, X } from "lucide-react";
+import { ArrowRight, CalendarDays, Check, ChevronRight, Heart, House, ImagePlus, Images, ListChecks, LoaderCircle, NotebookPen, Plus, RotateCcw, Settings2, Trash2, X } from "lucide-react";
 
 type Idea = { id: number; title: string; category: string; note: string; status: string; plannedDate: string | null; createdBy: string; createdAt: string };
 type Habit = { id: number; title: string; cadence: string; createdBy: string };
 type HabitCheck = { id: number; habitId: number; userId: string; day: string };
 type Memory = { id: number; title: string; note: string; memoryDate: string; createdBy: string; sourceIdeaId: number | null };
+type MemoryPhoto = { id: number; memoryId: number; fileName: string; contentType: string; uploadedBy: string; createdAt: string };
 type Person = { userId: string; displayName: string; customName: string | null; email: string };
-type Workspace = { currentUserId: string; people: Person[]; ideas: Idea[]; habits: Habit[]; checks: HabitCheck[]; memories: Memory[]; pendingPartnerName: string };
+type Workspace = { currentUserId: string; people: Person[]; ideas: Idea[]; habits: Habit[]; checks: HabitCheck[]; memories: Memory[]; memoryPhotos: MemoryPhoto[]; pendingPartnerName: string };
 type Tab = "today" | "ideas" | "habits" | "memories";
 type DeleteTarget = { kind: "Idea" | "Habit" | "Memory"; id: number; title: string };
-type Modal = null | { type: "idea" } | { type: "habit" } | { type: "memory"; idea?: Idea } | { type: "schedule"; idea: Idea } | { type: "names" } | { type: "delete"; target: DeleteTarget };
+type Modal = null | { type: "idea" } | { type: "habit" } | { type: "memory"; idea?: Idea } | { type: "schedule"; idea: Idea } | { type: "names" } | { type: "gallery"; memory: Memory } | { type: "delete"; target: DeleteTarget };
 
 const categoryMeta: Record<string, { label: string; mark: string }> = {
   eat: { label: "想吃", mark: "餐" }, buy: { label: "想买", mark: "物" }, go: { label: "想去", mark: "行" },
@@ -62,6 +63,38 @@ export default function TogetherApp({ displayName }: { displayName: string }) {
     try { const response = await fetch("/api/workspace", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "保存失败"); await load(); setModal(null); if (success) { setNotice(success); window.setTimeout(() => setNotice(""), 2400); } }
     catch (error) { setNotice(error instanceof Error ? error.message : "保存失败"); } finally { setBusy(false); }
   }
+  async function uploadPhotoFiles(memoryId: number, files: File[]) {
+    if (!files.length) return;
+    const form = new FormData();
+    form.set("memoryId", String(memoryId));
+    files.forEach((file) => form.append("photos", file));
+    const response = await fetch("/api/memory-photos", { method: "POST", body: form });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "照片上传失败");
+  }
+  async function saveMemory(payload: Record<string, unknown>, files: File[]) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/workspace", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "保存失败");
+      let uploadError = "";
+      if (files.length) { try { await uploadPhotoFiles(body.memory.id, files); } catch (error) { uploadError = error instanceof Error ? error.message : "照片上传失败"; } }
+      await load(); setModal(null); setNotice(uploadError ? `记录已保存，但${uploadError}` : files.length ? "记录和照片已保存" : "记录已保存"); window.setTimeout(() => setNotice(""), 3200);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "保存失败"); } finally { setBusy(false); }
+  }
+  async function addPhotos(memoryId: number, files: File[]) {
+    if (!files.length) return;
+    setBusy(true);
+    try { await uploadPhotoFiles(memoryId, files); await load(); setNotice("照片已添加"); window.setTimeout(() => setNotice(""), 2400); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "照片上传失败"); } finally { setBusy(false); }
+  }
+  async function deletePhoto(photoId: number) {
+    if (!window.confirm("删除这张照片？删除后无法恢复。")) return;
+    setBusy(true);
+    try { const response = await fetch(`/api/memory-photos?id=${photoId}`, { method: "DELETE" }); const body = await response.json(); if (!response.ok) throw new Error(body.error || "删除失败"); await load(); setNotice("照片已删除"); window.setTimeout(() => setNotice(""), 2400); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "删除失败"); } finally { setBusy(false); }
+  }
   const today = localDay();
   const me = data?.people.find((person) => person.userId === data.currentUserId);
   const partner = data?.people.find((person) => person.userId !== data.currentUserId);
@@ -82,11 +115,11 @@ export default function TogetherApp({ displayName }: { displayName: string }) {
       {tab === "today" && <Today data={data} planned={planned} today={today} me={me} partner={partner} myName={myDisplayName} partnerName={partnerDisplayName} doneToday={doneToday} onToggle={(habitId) => act({ action: "toggleHabit", habitId, day: today })} onOpenIdea={() => setModal({ type: "idea" })} onOpenHabit={() => setModal({ type: "habit" })} onComplete={(idea) => setModal({ type: "memory", idea })} />}
       {tab === "ideas" && <Ideas items={openIdeas} people={data.people} filter={filter} setFilter={setFilter} onAdd={() => setModal({ type: "idea" })} onPlan={(idea) => setModal({ type: "schedule", idea })} onComplete={(idea) => setModal({ type: "memory", idea })} onDelete={(idea) => setModal({ type: "delete", target: { kind: "Idea", id: idea.id, title: idea.title } })} />}
       {tab === "habits" && <Habits habits={data.habits} checks={data.checks} people={data.people} today={today} me={me} partner={partner} myName={myDisplayName} partnerName={partnerDisplayName} currentUserId={data.currentUserId} onAdd={() => setModal({ type: "habit" })} onToggle={(habitId) => act({ action: "toggleHabit", habitId, day: today })} onDelete={(habit) => setModal({ type: "delete", target: { kind: "Habit", id: habit.id, title: habit.title } })} />}
-      {tab === "memories" && <Memories memories={data.memories} people={data.people} onAdd={() => setModal({ type: "memory" })} onDelete={(memory) => setModal({ type: "delete", target: { kind: "Memory", id: memory.id, title: memory.title } })} />}
+      {tab === "memories" && <Memories memories={data.memories} photos={data.memoryPhotos} people={data.people} onAdd={() => setModal({ type: "memory" })} onOpenPhotos={(memory) => setModal({ type: "gallery", memory })} onDelete={(memory) => setModal({ type: "delete", target: { kind: "Memory", id: memory.id, title: memory.title } })} />}
     </div>
     <button onClick={addForTab} className="fixed bottom-[88px] right-5 z-20 flex h-12 w-12 items-center justify-center rounded-full bg-[#29332b] text-white shadow-[0_10px_30px_rgba(41,51,43,.24)] md:bottom-8 md:right-8" aria-label="新增"><Plus size={21} /></button>
     <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-black/[.07] bg-[#faf9f6]/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl md:hidden">{nav.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={`flex min-h-14 flex-col items-center justify-center gap-1 text-[11px] ${tab === id ? "text-[#29332b]" : "text-[#979990]"}`}><Icon size={20} strokeWidth={tab === id ? 2.2 : 1.7} /><span>{label}</span></button>)}</nav>
-    {modal && <ModalSheet modal={modal} busy={busy} close={() => setModal(null)} submit={act} me={me} partner={partner} pendingPartnerName={data.pendingPartnerName} />}
+    {modal && <ModalSheet modal={modal} busy={busy} close={() => setModal(null)} submit={act} submitMemory={saveMemory} uploadPhotos={addPhotos} deletePhoto={deletePhoto} memoryPhotos={data.memoryPhotos} me={me} partner={partner} pendingPartnerName={data.pendingPartnerName} />}
     {notice && <div role="status" className="fixed left-1/2 top-20 z-50 -translate-x-1/2 rounded-full bg-[#242622] px-4 py-2 text-sm text-white shadow-xl">{notice}</div>}
   </main>;
 }
@@ -115,13 +148,23 @@ function Habits({ habits, checks, people, today, me, partner, myName, partnerNam
   return <section><PageHeading eyebrow="习惯" title="习惯打卡" description="分别记录双方的完成情况。" />{habits.length ? <div className="grid gap-4 md:grid-cols-2">{habits.map((habit) => { const checked = isDone(habit.id, currentUserId); const creator = people.find((person) => person.userId === habit.createdBy); return <article key={habit.id} className="rounded-[26px] border border-black/[.07] bg-[#faf9f6] p-6"><div className="flex items-start justify-between gap-4"><div><p className="text-sm text-[#8a8d85]">{habit.cadence} · {personName(creator)} 添加</p><h3 className="mt-2 text-2xl font-medium tracking-tight">{habit.title}</h3></div><div className="flex items-center gap-2"><DeleteButton label={`删除习惯：${habit.title}`} onClick={() => onDelete(habit)} /><button onClick={() => onToggle(habit.id)} className={`flex h-12 w-12 items-center justify-center rounded-full border transition ${checked ? "border-[#29332b] bg-[#29332b] text-white" : "border-black/10 bg-black/[.025] text-black/20 hover:border-black/20"}`} aria-label={checked ? "取消今日打卡" : "完成今日打卡"}><Check /></button></div></div><div className="mt-8 grid grid-cols-2 gap-3"><PersonStatus person={me} name={myName} done={isDone(habit.id, me?.userId)} /><PersonStatus person={partner} name={partnerName} done={isDone(habit.id, partner?.userId)} /></div></article>; })}</div> : <Empty text="还没有习惯。" action="添加习惯" onClick={onAdd} large />}</section>;
 }
 
-function Memories({ memories, people, onAdd, onDelete }: { memories: Memory[]; people: Person[]; onAdd: () => void; onDelete: (memory: Memory) => void }) {
-  return <section><PageHeading eyebrow="记录" title="记录" description="按日期查看已经完成的项目和手动添加的记录。" />{memories.length ? <div className="relative mx-auto max-w-3xl before:absolute before:bottom-0 before:left-[17px] before:top-1 before:w-px before:bg-black/10 md:before:left-[23px]">{memories.map((memory) => { const author = people.find((p) => p.userId === memory.createdBy); return <article key={memory.id} className="relative mb-5 pl-12 md:pl-16"><span className="absolute left-[10px] top-7 h-[15px] w-[15px] rounded-full border-4 border-[#f4f2ed] bg-[#c77862] md:left-4" /><div className="rounded-[24px] bg-[#faf9f6] p-5 md:p-7"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><time className="text-sm text-[#888b83]">{shortDate(memory.memoryDate)}</time><span className="text-xs text-[#9b9d96]">{personName(author)} 记录</span></div><DeleteButton label={`删除记录：${memory.title}`} onClick={() => onDelete(memory)} /></div><h3 className="mt-4 text-xl font-medium tracking-tight md:text-2xl">{memory.title}</h3>{memory.note && <p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-[#676a63]">{memory.note}</p>}</div></article>; })}</div> : <Empty text="还没有记录。" action="添加记录" onClick={onAdd} large />}</section>;
+function Memories({ memories, photos, people, onAdd, onOpenPhotos, onDelete }: { memories: Memory[]; photos: MemoryPhoto[]; people: Person[]; onAdd: () => void; onOpenPhotos: (memory: Memory) => void; onDelete: (memory: Memory) => void }) {
+  return <section><PageHeading eyebrow="记录" title="记录" description="按日期查看已经完成的项目和手动添加的记录。" />{memories.length ? <div className="relative mx-auto max-w-3xl before:absolute before:bottom-0 before:left-[17px] before:top-1 before:w-px before:bg-black/10 md:before:left-[23px]">{memories.map((memory) => { const author = people.find((p) => p.userId === memory.createdBy); const memoryPhotos = photos.filter((photo) => photo.memoryId === memory.id); const visiblePhotos = memoryPhotos.slice(0, 4); return <article key={memory.id} className="relative mb-5 pl-12 md:pl-16"><span className="absolute left-[10px] top-7 h-[15px] w-[15px] rounded-full border-4 border-[#f4f2ed] bg-[#c77862] md:left-4" /><div className="rounded-[24px] bg-[#faf9f6] p-5 md:p-7"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-3"><time className="text-sm text-[#888b83]">{shortDate(memory.memoryDate)}</time><span className="text-xs text-[#9b9d96]">{personName(author)} 记录</span></div><div className="flex items-center gap-1"><button type="button" onClick={() => onOpenPhotos(memory)} aria-label={memoryPhotos.length ? `查看和添加照片，现有 ${memoryPhotos.length} 张` : "添加照片"} className="flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs text-[#858880] transition hover:bg-black/5"><Images size={16} />{memoryPhotos.length || "添加"}</button><DeleteButton label={`删除记录：${memory.title}`} onClick={() => onDelete(memory)} /></div></div><h3 className="mt-4 text-xl font-medium tracking-tight md:text-2xl">{memory.title}</h3>{memory.note && <p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-[#676a63]">{memory.note}</p>}{memoryPhotos.length > 0 && <button type="button" onClick={() => onOpenPhotos(memory)} className={`mt-5 grid w-full overflow-hidden rounded-2xl bg-black/5 text-left ${visiblePhotos.length === 1 ? "grid-cols-1" : "grid-cols-2"}`} aria-label={`查看 ${memoryPhotos.length} 张照片`}>{visiblePhotos.map((photo, index) => <span key={photo.id} className={`relative block overflow-hidden ${visiblePhotos.length === 1 ? "aspect-[4/3]" : "aspect-square"}`}><img src={`/api/memory-photos?id=${photo.id}`} alt={`${memory.title}的照片 ${index + 1}`} loading="lazy" className="h-full w-full object-cover" />{index === 3 && memoryPhotos.length > 4 && <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-lg font-medium text-white">+{memoryPhotos.length - 4}</span>}</span>)}</button>}</div></article>; })}</div> : <Empty text="还没有记录。" action="添加记录" onClick={onAdd} large />}</section>;
 }
 
-function ModalSheet({ modal, busy, close, submit, me, partner, pendingPartnerName }: { modal: Exclude<Modal, null>; busy: boolean; close: () => void; submit: (payload: Record<string, unknown>, success?: string) => void; me?: Person; partner?: Person; pendingPartnerName: string }) {
+function ModalSheet({ modal, busy, close, submit, submitMemory, uploadPhotos, deletePhoto, memoryPhotos, me, partner, pendingPartnerName }: { modal: Exclude<Modal, null>; busy: boolean; close: () => void; submit: (payload: Record<string, unknown>, success?: string) => void; submitMemory: (payload: Record<string, unknown>, files: File[]) => void; uploadPhotos: (memoryId: number, files: File[]) => void; deletePhoto: (photoId: number) => void; memoryPhotos: MemoryPhoto[]; me?: Person; partner?: Person; pendingPartnerName: string }) {
   const [title, setTitle] = useState(modal.type === "memory" && modal.idea ? modal.idea.title : ""); const [category, setCategory] = useState("go"); const [note, setNote] = useState(""); const [date, setDate] = useState(modal.type === "schedule" ? modal.idea.plannedDate || localDay() : localDay()); const [cadence, setCadence] = useState("每天");
   const [myName, setMyName] = useState(personName(me, "我")); const [partnerName, setPartnerName] = useState(personName(partner, pendingPartnerName || "TA"));
+  const [photos, setPhotos] = useState<File[]>([]); const [photoError, setPhotoError] = useState(""); const [previews, setPreviews] = useState<string[]>([]);
+  useEffect(() => { const urls = photos.map((file) => URL.createObjectURL(file)); setPreviews(urls); return () => urls.forEach((url) => URL.revokeObjectURL(url)); }, [photos]);
+
+  function selectedPhotos(list: FileList | null) {
+    const files = Array.from(list || []);
+    if (files.length > 9) { setPhotoError("每次最多选择 9 张照片"); return []; }
+    const invalid = files.find((file) => !["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"].includes(file.type) || file.size > 8 * 1024 * 1024);
+    if (invalid) { setPhotoError("请选择 JPG、PNG、WebP 或 HEIC，单张不超过 8 MB"); return []; }
+    setPhotoError(""); return files;
+  }
 
   if (modal.type === "delete") {
     const action = `delete${modal.target.kind}`;
@@ -132,14 +175,20 @@ function ModalSheet({ modal, busy, close, submit, me, partner, pendingPartnerNam
     return <DialogFrame close={close} eyebrow="设置" title="双方名字" description="名字只用于这个网站内显示。"><form onSubmit={(event) => { event.preventDefault(); submit({ action: "updateNames", myName, partnerName }, "名字已保存"); }} className="mt-7 space-y-5"><Field label="我的名字"><input autoFocus value={myName} onChange={(event) => setMyName(event.target.value)} required maxLength={30} className="form-control" /></Field><Field label="对方名字"><input value={partnerName} onChange={(event) => setPartnerName(event.target.value)} required maxLength={30} className="form-control" /></Field><button disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-full bg-[#29332b] px-5 py-3.5 font-medium text-white disabled:opacity-50">{busy && <LoaderCircle size={18} className="animate-spin" />}保存</button></form></DialogFrame>;
   }
 
+  if (modal.type === "gallery") {
+    const galleryPhotos = memoryPhotos.filter((photo) => photo.memoryId === modal.memory.id);
+    return <DialogFrame close={close} eyebrow="照片" title={modal.memory.title} description={`${galleryPhotos.length} 张照片，可继续分批添加。`}><label className="mt-6 flex cursor-pointer items-center justify-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-medium"><ImagePlus size={18} />{busy ? "正在上传…" : "添加照片"}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple disabled={busy} className="hidden" onChange={(event) => { const files = selectedPhotos(event.target.files); if (files.length) uploadPhotos(modal.memory.id, files); event.currentTarget.value = ""; }} /></label>{photoError && <p className="mt-3 text-sm text-[#a6473b]">{photoError}</p>}{galleryPhotos.length ? <div className="mt-5 grid grid-cols-2 gap-2">{galleryPhotos.map((photo, index) => <figure key={photo.id} className="group relative aspect-square overflow-hidden rounded-2xl bg-black/5"><img src={`/api/memory-photos?id=${photo.id}`} alt={`${modal.memory.title}的照片 ${index + 1}`} className="h-full w-full object-cover" /><button type="button" disabled={busy} onClick={() => deletePhoto(photo.id)} aria-label={`删除照片 ${index + 1}`} className="absolute right-2 top-2 flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur disabled:opacity-50"><Trash2 size={16} /></button></figure>)}</div> : <div className="mt-6 rounded-2xl border border-dashed border-black/15 p-8 text-center text-sm text-[#858880]">还没有照片。</div>}</DialogFrame>;
+  }
+
   const config = modal.type === "idea" ? ["添加清单", "填写分类和备注。"] : modal.type === "habit" ? ["添加习惯", "设置名称和频率。"] : modal.type === "schedule" ? ["设置日期", modal.idea.title] : ["添加记录", modal.idea ? `完成：${modal.idea.title}` : "填写日期和内容。"];
-  function send(event: React.FormEvent) { event.preventDefault(); if (modal.type === "idea") submit({ action: "createIdea", title, category, note }, "已添加到清单"); if (modal.type === "habit") submit({ action: "createHabit", title, cadence }, "习惯已添加"); if (modal.type === "schedule") submit({ action: "updateIdea", id: modal.idea.id, status: "planned", plannedDate: date }, "日期已保存"); if (modal.type === "memory") submit({ action: "createMemory", title, note, memoryDate: date, sourceIdeaId: modal.idea?.id }, "记录已保存"); }
+  function send(event: React.FormEvent) { event.preventDefault(); if (modal.type === "idea") submit({ action: "createIdea", title, category, note }, "已添加到清单"); if (modal.type === "habit") submit({ action: "createHabit", title, cadence }, "习惯已添加"); if (modal.type === "schedule") submit({ action: "updateIdea", id: modal.idea.id, status: "planned", plannedDate: date }, "日期已保存"); if (modal.type === "memory") submitMemory({ action: "createMemory", title, note, memoryDate: date, sourceIdeaId: modal.idea?.id }, photos); }
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-0 backdrop-blur-[2px] sm:items-center sm:p-5" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}><section role="dialog" aria-modal="true" className="flex max-h-[calc(100dvh-12px)] w-full flex-col overflow-hidden rounded-t-[28px] bg-[#faf9f6] p-5 shadow-2xl sm:max-h-[92dvh] sm:max-w-lg sm:rounded-[28px] sm:p-8"><div className="flex shrink-0 items-start justify-between"><div>{modal.type !== "idea" && <p className="text-xs font-medium uppercase tracking-[.18em] text-[#9a796b]">新增</p>}<h2 className={`${modal.type === "idea" ? "" : "mt-2"} text-2xl font-medium tracking-tight`}>{config[0]}</h2>{modal.type !== "idea" && <p className="mt-2 text-sm leading-6 text-[#81847c]">{config[1]}</p>}</div><button onClick={close} className="rounded-full bg-black/5 p-2" aria-label="关闭"><X size={18} /></button></div><form onSubmit={send} className={`${modal.type === "idea" ? "mt-5 space-y-4" : "mt-7 space-y-5"} min-h-0 overflow-y-auto overscroll-contain pb-[max(0px,env(safe-area-inset-bottom))]`}>
   {modal.type !== "schedule" && <Field label={modal.type === "habit" ? "想一起坚持什么" : "标题"}><input value={title} onChange={(e) => setTitle(e.target.value)} required placeholder={modal.type === "habit" ? "例如：晚饭后散步十分钟" : "例如：去海边看一次日落"} className="form-control" /></Field>}
   {modal.type === "idea" && <><Field label="分类"><div className="grid grid-cols-3 gap-1.5">{Object.entries(categoryMeta).map(([id, item]) => <button type="button" key={id} onClick={() => setCategory(id)} className={`rounded-xl border px-2 py-2 text-sm ${category === id ? "border-[#29332b] bg-[#29332b] text-white" : "border-black/10 bg-white"}`}>{item.label}</button>)}</div></Field><Field label="备注（可不填）"><textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="地址、链接或预算" className="form-control min-h-16 resize-none" /></Field></>}
   {modal.type === "habit" && <Field label="频率"><select value={cadence} onChange={(e) => setCadence(e.target.value)} className="form-control"><option>每天</option><option>工作日</option><option>每周三次</option><option>每周一次</option></select></Field>}
   {(modal.type === "schedule" || modal.type === "memory") && <Field label={modal.type === "schedule" ? "计划日期" : "发生日期"}><input type="date" value={date} onChange={(e) => setDate(e.target.value)} required className="form-control" /></Field>}
   {modal.type === "memory" && <Field label="想留下的话（可不填）"><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="那天发生了什么？有什么想一起记住？" className="form-control min-h-28 resize-none" /></Field>}
+  {modal.type === "memory" && <Field label="照片（可不填）"><label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-black/15 bg-white/55 px-4 py-4 text-sm font-medium"><ImagePlus size={19} />选择照片<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple className="hidden" onChange={(event) => { const files = selectedPhotos(event.target.files); if (files.length) setPhotos(files); event.currentTarget.value = ""; }} /></label><p className="mt-2 text-xs leading-5 text-[#92958d]">每次最多选择 9 张，单张不超过 8 MB；保存后仍可继续添加。</p>{photoError && <p className="mt-2 text-sm text-[#a6473b]">{photoError}</p>}{previews.length > 0 && <div className="mt-3 grid grid-cols-3 gap-2">{previews.map((url, index) => <span key={url} className="relative aspect-square overflow-hidden rounded-xl bg-black/5"><img src={url} alt={`待上传照片 ${index + 1}`} className="h-full w-full object-cover" /><button type="button" onClick={() => setPhotos((items) => items.filter((_, photoIndex) => photoIndex !== index))} aria-label={`移除照片 ${index + 1}`} className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/55 text-white"><X size={14} /></button></span>)}</div>}</Field>}
   <button disabled={busy} className={`flex w-full items-center justify-center gap-2 rounded-full bg-[#29332b] px-5 py-3.5 font-medium text-white disabled:opacity-50 ${modal.type === "idea" ? "sticky bottom-0 shadow-[0_-12px_20px_#faf9f6]" : ""}`}>{busy && <LoaderCircle size={18} className="animate-spin" />}{modal.type === "idea" ? "添加" : modal.type === "habit" ? "添加" : modal.type === "schedule" ? "保存日期" : "保存记录"}</button>
   </form></section></div>;
 }

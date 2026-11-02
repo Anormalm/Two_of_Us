@@ -15,6 +15,13 @@
       "when": 1793470027045,
       "tag": "0001_dashing_susan_delgado",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793639895564,
+      "tag": "0002_blushing_vindicator",
+      "breakpoints": true
     }
   ]
 }
